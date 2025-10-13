@@ -11,9 +11,9 @@ export async function handleSensorMessage({ msg, mqttClient, topics, geminiKey }
     t_c: msg.t_c, h_pct: msg.h_pct, soil_pct: msg.soil_pct
   });
 
-  // 2) Throttle LLM (every ~45s)
+  // 2) Throttle LLM (every ~10s)
   const now = Date.now();
-  if (now - lastGeminiAt < 45_000) return;
+  if (now - lastGeminiAt < 10_000) return; // 10s during testing
   lastGeminiAt = now;
 
   // 3) Build display payload via Gemini (+ emails)

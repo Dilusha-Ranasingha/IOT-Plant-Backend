@@ -23,18 +23,48 @@ export async function buildDisplayWithGemini(apiKey, sensor, emails) {
   ).join("\n");
 
   const prompt = `
-Return ONLY valid JSON with the schema:
+You are AuraLinkPlant for a tiny desk display.
+
+Return ONLY one JSON object exactly matching:
 {
- "quote": string, "emails":[{"from":string,"subject":string,"summary":string}],
- "priority":"low"|"normal"|"high",
- "advice":{"water_now":boolean,"reason":string}
+  "quote": string,                        // <= 60 chars, poetic but simple
+  "emails": [                             // up to 2 items
+    {"from": string, "subject": string, "summary": string} // summary <= 12 words
+  ],
+  "priority": "low"|"normal"|"high",
+  "advice": {"water_now": boolean, "reason": string}       // reason <= 90 chars
 }
-Use sensor values: T=${sensor.t_c}°C, H=${sensor.h_pct}%, Soil=${sensor.soil_pct}%.
-If Soil < 35 set advice.water_now=true and mention "dry soil".
-Keep quote <= 60 chars, short and poetic.
-Context ts=${sensor.ts}
-Recent emails (up to 2):
+
+Hard rules:
+- Output MUST be pure JSON (no code fences, no markdown, no extra text).
+- Keys lowercase as shown. Maximum 2 emails.
+- If an email field is missing, omit that email item completely.
+
+Sensor values:
+- T = ${sensor.t_c} °C, H = ${sensor.h_pct} %, Soil = ${sensor.soil_pct} % (0–100).
+
+Interpretation bands (use these words in the reason):
+- Temperature: cool < 20, mild 20–28, warm > 28 (use one: "cool"/"mild"/"warm").
+- Humidity: dry < 40, comfy 40–65, humid > 65 (use one: "dry"/"comfy"/"humid").
+- Soil: dry < 35, optimal 35–45, wet > 45 (use one: "dry"/"optimal"/"wet").
+
+Advice rules:
+- If Soil < 35: advice.water_now = true and reason must include "dry soil" and a simple action (e.g., "add 50–100 ml").
+- If Soil < 25 OR (T > 30 AND Soil < 35): priority = "high".
+- If all bands are within mild/comfy/optimal → priority = "normal" and water_now = false.
+- If H > 70: suggest "increase airflow"; if T > 32: suggest "move to shade"; if Soil > 60: suggest "pause watering".
+- Keep reason compact and actionable; include the three statuses like: "warm, comfy, optimal — no water needed".
+
+Quote style:
+- Make the quote reflect the environment (warm/mild/cool; humid/dry; soil state) without repeating the numeric values.
+- Stay under 60 chars; no emojis.
+
+Context:
+- Timestamp: ${sensor.ts}
+- Recent emails (max 2), each line is "From — Subject — Snippet":
 ${emailContext}
+
+Produce ONLY the JSON now.
 `;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;

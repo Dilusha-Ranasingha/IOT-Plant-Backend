@@ -7,7 +7,7 @@ const OutputZ = z.object({
     from: z.string(),
     subject: z.string(),
     summary: z.string()
-  })).max(2).optional().default([]),
+  })).max(1).optional().default([]), // <-- ONLY ONE email now
   priority: z.enum(["low","normal","high"]).default("normal"),
   advice: z.object({
     water_now: z.boolean(),
@@ -26,7 +26,7 @@ const PLANT_BANDS = {
   "succulent":     { t:[18,32], h:[20,40], soil:[10,25] },
 };
 
-export async function buildDisplayWithGemini(apiKey, sensor, emails) {
+export async function buildDisplayWithGemini(apiKey, sensor/*, emailsNotUsed*/) {
   const { plantName = "" } = sensor;
 
   // Early fallback if no API key
@@ -34,15 +34,15 @@ export async function buildDisplayWithGemini(apiKey, sensor, emails) {
     return {
       ts: sensor.ts,
       quote: "Gentle air, steady roots.",
-      emails: [],
+      emails: [{
+        from: "AuraLinkPlant",
+        subject: "Plant status update",
+        summary: "Fallback mode: basic advice included."
+      }],
       priority: sensor.soil_pct < 25 ? "high" : "normal",
       advice: { water_now: sensor.soil_pct < 35, reason: "No Gemini API key; using fallback." }
     };
   }
-
-  const emailContext = emails.map(
-    e => `From: ${e.from} — Subject: ${e.subject} — Snippet: ${e.snippet}`
-  ).join("\n");
 
   const bands = PLANT_BANDS[plantName?.toLowerCase?.() || ""] || null;
   const bandsText = bands ? `
@@ -55,26 +55,26 @@ If "${plantName}" is recognized, prefer these ranges:
   const prompt = `
 You are AuraLinkPlant for a tiny desk display.
 
-Plant: ${plantName || "unknown"}  // tailor guidance to this species if known.
-${bandsText}
+Plant: ${plantName || "unknown"}.
 
 Return ONLY one JSON object exactly matching:
 {
-  "quote": string,                        // <= 60 chars, poetic but simple
-  "emails": [                             // up to 2 items
-    {"from": string, "subject": string, "summary": string} // summary <= 12 words
+  "quote": string,                                  // <= 60 chars
+  "emails": [                                       // EXACTLY 1 item
+    {"from": string, "subject": string, "summary": string}  // summary <= 140 chars
   ],
   "priority": "low"|"normal"|"high",
-  "advice": {"water_now": boolean, "reason": string}       // reason <= 90 chars
+  "advice": {"water_now": boolean, "reason": string}        // <= 90 chars
 }
 
-Hard rules:
-- Output MUST be pure JSON (no code fences, no markdown, no extra text).
-- Keys lowercase as shown. Max 2 emails.
-- If any email field is missing, omit that email item completely.
+Email requirements:
+- Generate EXACTLY ONE email "from": "AuraLinkPlant".
+- The email is for the plant owner (single recipient), summarizing current status and an action if needed.
+- Do not invent other people ("Alice", "Bob"). No external senders.
+- Subject should be concise (<= 60 chars). Summary <= 140 chars.
 
 Sensor values:
-- T = ${sensor.t_c} °C, H = ${sensor.h_pct} %, Soil = ${sensor.soil_pct} % (0–100).
+- T = ${sensor.t_c} °C, H = ${sensor.h_pct} %, Soil = ${sensor.soil_pct} %.
 
 Fallback interpretation bands (use if plant is unknown):
 - Temperature: cool < 20, mild 20–28, warm > 28.
@@ -86,18 +86,15 @@ Advice rules:
 - If Soil < 25 OR (T > 30 AND Soil < 35): priority = "high".
 - If all bands are within mild/comfy/optimal → priority = "normal" and water_now = false.
 - If H > 70: suggest "increase airflow"; if T > 32: suggest "move to shade"; if Soil > 60: suggest "pause watering".
-- Keep reason compact and actionable; include the three statuses like: "warm, comfy, optimal — no water needed".
+- Keep reason compact; include statuses like: "warm, comfy, optimal — no water needed".
 
 Quote style:
-- Reflect the environment and the plant (if known) without repeating numbers.
-- Stay under 60 chars; no emojis.
+- Reflect the environment & plant; under 60 chars; no emojis.
 
 Context:
 - Timestamp: ${sensor.ts}
-- Recent emails (max 2), each line is "From — Subject — Snippet":
-${emailContext}
 
-Produce ONLY the JSON now.
+Output: ONLY JSON, no markdown.
 `;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
@@ -127,7 +124,7 @@ Produce ONLY the JSON now.
     return {
       ts: sensor.ts,
       quote: parsed.quote,
-      emails: parsed.emails,
+      emails: parsed.emails,     // <= exactly 1 item from prompt
       priority: parsed.priority,
       advice: parsed.advice
     };
@@ -136,7 +133,11 @@ Produce ONLY the JSON now.
     return {
       ts: sensor.ts,
       quote: "Gentle air, steady roots.",
-      emails: [],
+      emails: [{
+        from: "AuraLinkPlant",
+        subject: "Plant status (fallback)",
+        summary: "Using fallback logic. Check soil and adjust watering."
+      }],
       priority: sensor.soil_pct < 25 ? "high" : "normal",
       advice: { water_now: sensor.soil_pct < 35, reason: "Fallback JSON." }
     };

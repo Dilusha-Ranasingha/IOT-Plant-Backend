@@ -1,9 +1,11 @@
 // src/pipeline.js
 import { Reading, Display } from "./models.js";
-import { getRecentEmails } from "./email.js";
+// import { getRecentEmails } from "./email.js";  // <-- not needed anymore
 import { buildDisplayWithGemini } from "./gemini.js";
 import { getPlantName } from "./deviceCache.js";
+import { sendGeneratedEmail } from "./mailer.js";
 
+const INTERVAL = Number(process.env.LLM_INTERVAL_MS || 60000);
 let lastGeminiAt = 0;
 
 export async function handleSensorMessage({ msg, mqttClient, topics, geminiKey }) {
@@ -13,19 +15,28 @@ export async function handleSensorMessage({ msg, mqttClient, topics, geminiKey }
     t_c: msg.t_c, h_pct: msg.h_pct, soil_pct: msg.soil_pct
   });
 
-  // 2) Throttle LLM (10s while testing)
   const now = Date.now();
-  if (now - lastGeminiAt < 10_000) return;
+  if (now - lastGeminiAt < INTERVAL) return;
   lastGeminiAt = now;
 
-  // 3) Build display payload via Gemini (+ emails)
-  const emails = getRecentEmails(2);
   const plantName = getPlantName(msg.deviceId) || "";
-  const displayPayload = await buildDisplayWithGemini(geminiKey, { ...msg, plantName }, emails);
+  // no emails passed in; Gemini will generate one
+  const displayPayload = await buildDisplayWithGemini(geminiKey, { ...msg, plantName }, []);
 
-  // 4) Publish back to device
+  // publish to device
   mqttClient.publish(topics.out, JSON.stringify(displayPayload), { qos: 1, retain: true });
 
-  // 5) Cache what we sent
+  // persist display
   await Display.create({ ts: new Date(displayPayload.ts), deviceId: msg.deviceId, payload: displayPayload });
+
+  // send email (if model provided it)
+  const first = displayPayload.emails?.[0];
+  if (first?.subject && (first.summary || first.body)) {
+    const body = first.summary || first.body;
+    try {
+      await sendGeneratedEmail({ subject: first.subject, body });
+    } catch (e) {
+      console.error("[mail] send failed:", e.message);
+    }
+  }
 }

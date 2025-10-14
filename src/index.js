@@ -7,6 +7,7 @@ import { connectMqtt } from "./mqtt.js";
 import { startEmailFetcher } from "./email.js";
 import { handleSensorMessage } from "./pipeline.js";
 import { warmDeviceCache, setPlantName, getPlantName } from "./deviceCache.js"; // getPlantName
+import { initMailer } from "./mailer.js";
 
 const {
   MQTT_URL, MQTT_USER, MQTT_PASS, DEVICE_ID,
@@ -124,12 +125,19 @@ app.listen(httpPort, () => console.log(`[api] listening on http://localhost:${ht
 // --- Main runtime ---
 (async () => {
   await connectMongo(MONGODB_URI);
-  await warmDeviceCache(DEVICE_ID); // load current device's plantName on boot
+  await warmDeviceCache(DEVICE_ID);
 
-  await startEmailFetcher({
-    host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_SECURE,
-    user: IMAP_USER, pass: IMAP_PASS
-  });
+  await initMailer(); // will log [mail] smtp ready if creds loaded
+
+  // only run if all IMAP creds exist (you’re not reading inbox anyway)
+  if (IMAP_HOST && IMAP_USER && IMAP_PASS) {
+    await startEmailFetcher({
+      host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_SECURE,
+      user: IMAP_USER, pass: IMAP_PASS
+    });
+  } else {
+    console.log("[email] fetcher skipped (no IMAP creds)");
+  }
 
   const client = connectMqtt({ url: MQTT_URL, username: MQTT_USER, password: MQTT_PASS, willTopic: topics.will });
   client.on("connect", () => client.subscribe(topics.in, { qos: 1 }, () =>
@@ -140,7 +148,6 @@ app.listen(httpPort, () => console.log(`[api] listening on http://localhost:${ht
     let msg;
     try { msg = JSON.parse(buf.toString()); }
     catch { return console.warn("[mqtt] bad JSON"); }
-    // basic validation & clamping
     msg.t_c = Number(msg.t_c ?? 0); msg.h_pct = Number(msg.h_pct ?? 0); msg.soil_pct = Number(msg.soil_pct ?? 0);
     msg.t_c = Math.max(-10, Math.min(60, msg.t_c));
     msg.h_pct = Math.max(0, Math.min(100, msg.h_pct));

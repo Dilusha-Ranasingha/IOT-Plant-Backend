@@ -1,3 +1,4 @@
+// src/gemini.js
 import { z } from "zod";
 
 const OutputZ = z.object({
@@ -14,16 +15,48 @@ const OutputZ = z.object({
   })
 });
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash"; 
-// alternatives if needed: "gemini-2.0-flash" or "gemini-2.0-flash-latest"
+// Model configurable via .env; defaults to flash for speed
+const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+
+// Optional: add/extend per-plant target bands here
+const PLANT_BANDS = {
+  "snake plant":   { t:[18,30], h:[30,50], soil:[25,40] },
+  "peace lily":    { t:[18,27], h:[50,80], soil:[40,55] },
+  "pothos":        { t:[18,29], h:[40,60], soil:[35,50] },
+  "succulent":     { t:[18,32], h:[20,40], soil:[10,25] },
+};
 
 export async function buildDisplayWithGemini(apiKey, sensor, emails) {
+  const { plantName = "" } = sensor;
+
+  // Early fallback if no API key
+  if (!apiKey) {
+    return {
+      ts: sensor.ts,
+      quote: "Gentle air, steady roots.",
+      emails: [],
+      priority: sensor.soil_pct < 25 ? "high" : "normal",
+      advice: { water_now: sensor.soil_pct < 35, reason: "No Gemini API key; using fallback." }
+    };
+  }
+
   const emailContext = emails.map(
     e => `From: ${e.from} — Subject: ${e.subject} — Snippet: ${e.snippet}`
   ).join("\n");
 
+  const bands = PLANT_BANDS[plantName?.toLowerCase?.() || ""] || null;
+  const bandsText = bands ? `
+If "${plantName}" is recognized, prefer these ranges:
+- Temperature: ${bands.t[0]}–${bands.t[1]} °C
+- Humidity: ${bands.h[0]}–${bands.h[1]} %
+- Soil: ${bands.soil[0]}–${bands.soil[1]} %
+` : "";
+
   const prompt = `
 You are AuraLinkPlant for a tiny desk display.
+
+Plant: ${plantName || "unknown"}  // tailor guidance to this species if known.
+${bandsText}
 
 Return ONLY one JSON object exactly matching:
 {
@@ -37,26 +70,26 @@ Return ONLY one JSON object exactly matching:
 
 Hard rules:
 - Output MUST be pure JSON (no code fences, no markdown, no extra text).
-- Keys lowercase as shown. Maximum 2 emails.
-- If an email field is missing, omit that email item completely.
+- Keys lowercase as shown. Max 2 emails.
+- If any email field is missing, omit that email item completely.
 
 Sensor values:
 - T = ${sensor.t_c} °C, H = ${sensor.h_pct} %, Soil = ${sensor.soil_pct} % (0–100).
 
-Interpretation bands (use these words in the reason):
-- Temperature: cool < 20, mild 20–28, warm > 28 (use one: "cool"/"mild"/"warm").
-- Humidity: dry < 40, comfy 40–65, humid > 65 (use one: "dry"/"comfy"/"humid").
-- Soil: dry < 35, optimal 35–45, wet > 45 (use one: "dry"/"optimal"/"wet").
+Fallback interpretation bands (use if plant is unknown):
+- Temperature: cool < 20, mild 20–28, warm > 28.
+- Humidity: dry < 40, comfy 40–65, humid > 65.
+- Soil: dry < 35, optimal 35–45, wet > 45.
 
 Advice rules:
-- If Soil < 35: advice.water_now = true and reason must include "dry soil" and a simple action (e.g., "add 50–100 ml").
+- If Soil < 35: advice.water_now = true; reason includes "dry soil" + a simple action (e.g., "add 50–100 ml").
 - If Soil < 25 OR (T > 30 AND Soil < 35): priority = "high".
 - If all bands are within mild/comfy/optimal → priority = "normal" and water_now = false.
 - If H > 70: suggest "increase airflow"; if T > 32: suggest "move to shade"; if Soil > 60: suggest "pause watering".
 - Keep reason compact and actionable; include the three statuses like: "warm, comfy, optimal — no water needed".
 
 Quote style:
-- Make the quote reflect the environment (warm/mild/cool; humid/dry; soil state) without repeating the numeric values.
+- Reflect the environment and the plant (if known) without repeating numbers.
 - Stay under 60 chars; no emojis.
 
 Context:
@@ -69,6 +102,7 @@ Produce ONLY the JSON now.
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
   console.log("[gemini] model:", MODEL);
+
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }]}],
     generationConfig: {
@@ -82,8 +116,8 @@ Produce ONLY the JSON now.
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) {
-        const errTxt = await res.text();
-        throw new Error(`gemini status ${res.status} - ${errTxt}`);
+      const errTxt = await res.text();
+      throw new Error(`gemini status ${res.status} - ${errTxt}`);
     }
     const data = await res.json();
     text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";

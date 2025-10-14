@@ -1,3 +1,4 @@
+// src/models.js
 import mongoose from "mongoose";
 
 export async function connectMongo(uri) {
@@ -22,3 +23,11 @@ const DisplaySchema = new mongoose.Schema({
 }, { timestamps: true });
 
 export const Display = mongoose.model("Display", DisplaySchema);
+
+// NEW: store per-device settings (e.g., plantName)
+const DeviceSchema = new mongoose.Schema({
+  deviceId: { type: String, unique: true, index: true },
+  plantName: { type: String, default: "" }
+}, { timestamps: true });
+
+export const Device = mongoose.model("Device", DeviceSchema);

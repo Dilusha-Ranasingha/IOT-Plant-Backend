@@ -1,6 +1,8 @@
+// src/pipeline.js
 import { Reading, Display } from "./models.js";
 import { getRecentEmails } from "./email.js";
 import { buildDisplayWithGemini } from "./gemini.js";
+import { getPlantName } from "./deviceCache.js";
 
 let lastGeminiAt = 0;
 
@@ -11,18 +13,19 @@ export async function handleSensorMessage({ msg, mqttClient, topics, geminiKey }
     t_c: msg.t_c, h_pct: msg.h_pct, soil_pct: msg.soil_pct
   });
 
-  // 2) Throttle LLM (every ~10s)
+  // 2) Throttle LLM (10s while testing)
   const now = Date.now();
-  if (now - lastGeminiAt < 10_000) return; // 10s during testing
+  if (now - lastGeminiAt < 10_000) return;
   lastGeminiAt = now;
 
   // 3) Build display payload via Gemini (+ emails)
   const emails = getRecentEmails(2);
-  const displayPayload = await buildDisplayWithGemini(geminiKey, msg, emails);
+  const plantName = getPlantName(msg.deviceId) || "";
+  const displayPayload = await buildDisplayWithGemini(geminiKey, { ...msg, plantName }, emails);
 
   // 4) Publish back to device
   mqttClient.publish(topics.out, JSON.stringify(displayPayload), { qos: 1, retain: true });
 
-  // 5) Cache what we sent (optional)
+  // 5) Cache what we sent
   await Display.create({ ts: new Date(displayPayload.ts), deviceId: msg.deviceId, payload: displayPayload });
 }

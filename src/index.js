@@ -6,7 +6,7 @@ import { connectMongo, Device, Display, Reading } from "./models.js"; // get Dis
 import { connectMqtt } from "./mqtt.js";
 import { startEmailFetcher } from "./email.js";
 import { handleSensorMessage } from "./pipeline.js";
-import { warmDeviceCache, setPlantName, getPlantName } from "./deviceCache.js"; // getPlantName
+import { warmDeviceCache, setPlantName, getPlantName, setNotifyEmail, getNotifyEmail } from "./deviceCache.js";
 import { initMailer } from "./mailer.js";
 
 const {
@@ -42,6 +42,32 @@ app.post("/api/device/:id/plant", async (req, res) => {
   );
   setPlantName(deviceId, doc.plantName);
   return res.json({ ok: true, deviceId, plantName: doc.plantName });
+});
+
+// NEW: set/update notify email for a device
+app.post("/api/device/:id/notify-email", async (req, res) => {
+  const deviceId = req.params.id;
+  const { email } = req.body || {};
+  if (!email || !email.trim()) {
+    return res.status(400).json({ ok: false, error: "email required" });
+  }
+  const doc = await Device.findOneAndUpdate(
+    { deviceId },
+    { $set: { notifyEmail: email.trim() } },
+    { upsert: true, new: true }
+  );
+  setNotifyEmail(deviceId, doc.notifyEmail);
+  return res.json({ ok: true, deviceId, notifyEmail: doc.notifyEmail });
+});
+
+// NEW: get current notify email
+app.get("/api/device/:id/notify-email", async (req, res) => {
+  const deviceId = req.params.id;
+  const cached = getNotifyEmail(deviceId);
+  if (cached) return res.json({ ok: true, deviceId, notifyEmail: cached });
+
+  const doc = await Device.findOne({ deviceId }).lean();
+  return res.json({ ok: true, deviceId, notifyEmail: doc?.notifyEmail || "" });
 });
 
 // health

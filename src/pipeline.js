@@ -2,7 +2,7 @@
 import { Reading, Display } from "./models.js";
 // import { getRecentEmails } from "./email.js";  // <-- not needed anymore
 import { buildDisplayWithGemini } from "./gemini.js";
-import { getPlantName } from "./deviceCache.js";
+import { getPlantName, getNotifyEmail } from "./deviceCache.js"; // <-- add getNotifyEmail
 import { sendGeneratedEmail } from "./mailer.js";
 
 const INTERVAL = Number(process.env.LLM_INTERVAL_MS || 60000);
@@ -32,9 +32,10 @@ export async function handleSensorMessage({ msg, mqttClient, topics, geminiKey }
   // send email (if model provided it)
   const first = displayPayload.emails?.[0];
   if (first?.subject && (first.summary || first.body)) {
+    const toOverride = getNotifyEmail(msg.deviceId) || undefined; // <-- use per-device email if set
     const body = first.summary || first.body;
     try {
-      await sendGeneratedEmail({ subject: first.subject, body });
+      await sendGeneratedEmail({ subject: first.subject, body, to: toOverride });
     } catch (e) {
       console.error("[mail] send failed:", e.message);
     }

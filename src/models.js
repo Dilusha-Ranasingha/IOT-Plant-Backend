@@ -27,7 +27,8 @@ export const Display = mongoose.model("Display", DisplaySchema);
 // NEW: store per-device settings (e.g., plantName)
 const DeviceSchema = new mongoose.Schema({
   deviceId: { type: String, unique: true, index: true },
-  plantName: { type: String, default: "" }
+  plantName: { type: String, default: "" },
+  notifyEmail: { type: String, default: "" } // <-- ADD: per-device receiver
 }, { timestamps: true });
 
 export const Device = mongoose.model("Device", DeviceSchema);

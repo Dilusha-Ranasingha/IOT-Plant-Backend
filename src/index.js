@@ -1,11 +1,12 @@
 // src/index.js
 import "dotenv/config";
 import express from "express";
-import { connectMongo, Device } from "./models.js";
+import cors from "cors";
+import { connectMongo, Device, Display, Reading } from "./models.js"; // get Display, Reading here
 import { connectMqtt } from "./mqtt.js";
 import { startEmailFetcher } from "./email.js";
 import { handleSensorMessage } from "./pipeline.js";
-import { warmDeviceCache, setPlantName } from "./deviceCache.js";
+import { warmDeviceCache, setPlantName, getPlantName } from "./deviceCache.js"; // getPlantName
 
 const {
   MQTT_URL, MQTT_USER, MQTT_PASS, DEVICE_ID,
@@ -44,6 +45,78 @@ app.post("/api/device/:id/plant", async (req, res) => {
 
 // health
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+app.use(cors({ origin: "http://localhost:5173" })); // your frontend origin
+
+
+// ---- data reading APIs for dashboard ----
+
+// current plant name (uses cache, falls back to DB)
+app.get("/api/device/:id/plant", async (req, res) => {
+  const deviceId = req.params.id;
+  const cached = getPlantName(deviceId);
+  if (cached) return res.json({ ok: true, deviceId, plantName: cached });
+
+  const doc = await Device.findOne({ deviceId }).lean();
+  return res.json({ ok: true, deviceId, plantName: doc?.plantName || "" });
+});
+
+// latest display payload (what was last sent to the device)
+app.get("/api/device/:id/display/latest", async (req, res) => {
+  const deviceId = req.params.id;
+  const doc = await Display.findOne({ deviceId }).sort({ createdAt: -1 }).lean();
+  if (!doc) return res.status(404).json({ ok: false, error: "no display yet" });
+  // Return exactly what front-end needs; include timestamps for charts
+  return res.json({
+    ok: true,
+    deviceId,
+    createdAt: doc.createdAt,
+    ts: doc.ts,
+    payload: doc.payload
+  });
+});
+
+// recent display history (default: 20)
+app.get("/api/device/:id/displays", async (req, res) => {
+  const deviceId = req.params.id;
+  const limit = Math.min(parseInt(req.query.limit || "20", 10), 100);
+  const docs = await Display.find({ deviceId })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  return res.json({
+    ok: true,
+    deviceId,
+    count: docs.length,
+    items: docs.map(d => ({
+      createdAt: d.createdAt,
+      ts: d.ts,
+      payload: d.payload
+    }))
+  });
+});
+
+// recent sensor readings (default: 50)
+app.get("/api/device/:id/readings", async (req, res) => {
+  const deviceId = req.params.id;
+  const limit = Math.min(parseInt(req.query.limit || "50", 10), 500);
+  const docs = await Reading.find({ deviceId })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  return res.json({
+    ok: true,
+    deviceId,
+    count: docs.length,
+    items: docs.map(r => ({
+      createdAt: r.createdAt,
+      ts: r.ts,
+      t_c: r.t_c,
+      h_pct: r.h_pct,
+      soil_pct: r.soil_pct
+    }))
+  });
+});
 
 const httpPort = Number(PORT || 3000);
 app.listen(httpPort, () => console.log(`[api] listening on http://localhost:${httpPort}`));

@@ -7,7 +7,7 @@ const OutputZ = z.object({
     from: z.string(),
     subject: z.string(),
     summary: z.string()
-  })).max(1).optional().default([]), // <-- ONLY ONE email now
+  })).max(1).optional().default([]),
   priority: z.enum(["low","normal","high"]).default("normal"),
   advice: z.object({
     water_now: z.boolean(),
@@ -15,86 +15,71 @@ const OutputZ = z.object({
   })
 });
 
-// Model configurable via .env; defaults to flash for speed
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
-// Optional: add/extend per-plant target bands here
-const PLANT_BANDS = {
-  "snake plant":   { t:[18,30], h:[30,50], soil:[25,40] },
-  "peace lily":    { t:[18,27], h:[50,80], soil:[40,55] },
-  "pothos":        { t:[18,29], h:[40,60], soil:[35,50] },
-  "succulent":     { t:[18,32], h:[20,40], soil:[10,25] },
-};
+/**
+ * input = {
+ *   plantName: string,
+ *   readings: [{ ts, t_c, h_pct, soil_pct }],
+ *   latestTs: string
+ * }
+ */
+export async function buildDisplayWithGemini(apiKey, input) {
+  const plantName = input?.plantName || "unknown";
+  const readings = Array.isArray(input?.readings) ? input.readings : [];
+  const ts = input?.latestTs || new Date().toISOString();
 
-export async function buildDisplayWithGemini(apiKey, sensor/*, emailsNotUsed*/) {
-  const { plantName = "" } = sensor;
-
-  // Early fallback if no API key
+  // Fallback if no API key
   if (!apiKey) {
+    const avg = (arr, k) => arr.length ? (arr.reduce((s, r) => s + Number(r[k] || 0), 0) / arr.length) : 0;
+    const tavg = Math.round(avg(readings, "t_c") * 10) / 10;
+    const havg = Math.round(avg(readings, "h_pct"));
+    const savg = Math.round(avg(readings, "soil_pct"));
     return {
-      ts: sensor.ts,
+      ts,
       quote: "Gentle air, steady roots.",
       emails: [{
         from: "AuraLinkPlant",
-        subject: "Plant status update",
-        summary: "Fallback mode: basic advice included."
+        subject: `${plantName} status (fallback)`,
+        summary: `Avg T=${tavg}°C, H=${havg}%, Soil=${savg}%. Check watering and light.`
       }],
-      priority: sensor.soil_pct < 25 ? "high" : "normal",
-      advice: { water_now: sensor.soil_pct < 35, reason: "No Gemini API key; using fallback." }
+      priority: savg < 25 ? "high" : "normal",
+      advice: { water_now: savg < 35, reason: "No Gemini API key; using window average." }
     };
   }
 
-  const bands = PLANT_BANDS[plantName?.toLowerCase?.() || ""] || null;
-  const bandsText = bands ? `
-If "${plantName}" is recognized, prefer these ranges:
-- Temperature: ${bands.t[0]}–${bands.t[1]} °C
-- Humidity: ${bands.h[0]}–${bands.h[1]} %
-- Soil: ${bands.soil[0]}–${bands.soil[1]} %
-` : "";
+  const readingsJson = JSON.stringify(readings);
 
   const prompt = `
-You are AuraLinkPlant for a tiny desk display.
+You are AuraLinkPlant helping a home grower via a tiny desk display.
 
-Plant: ${plantName || "unknown"}.
+Plant: ${plantName}
 
-Return ONLY one JSON object exactly matching:
+You receive a 5-minute window of sensor readings as a JSON array:
+Each item: {"ts": ISO8601, "t_c": number, "h_pct": number, "soil_pct": number}
+readings = ${readingsJson}
+
+Your job:
+1) Infer ideal ranges for THIS plant (temperature, humidity, soil moisture) from your horticulture knowledge.
+2) Compare window **averages and trends** to those ranges (first vs last + average).
+3) Output EXACTLY ONE JSON OBJECT (not an array, not wrapped, no markdown) with this schema:
 {
   "quote": string,                                  // <= 60 chars
   "emails": [                                       // EXACTLY 1 item
-    {"from": string, "subject": string, "summary": string}  // summary <= 140 chars
+    {"from": "AuraLinkPlant", "subject": string, "summary": string} // <=140 chars
   ],
   "priority": "low"|"normal"|"high",
-  "advice": {"water_now": boolean, "reason": string}        // <= 90 chars
+  "advice": {"water_now": boolean, "reason": string} // <= 90 chars
 }
 
-Email requirements:
-- Generate EXACTLY ONE email "from": "AuraLinkPlant".
-- The email is for the plant owner (single recipient), summarizing current status and an action if needed.
-- Do not invent other people ("Alice", "Bob"). No external senders.
-- Subject should be concise (<= 60 chars). Summary <= 140 chars.
+Guidance:
+- "high" if soil below ideal & trending down, or temps above ideal, or humidity far outside ideal.
+- Within ideal and stable → "normal" + water_now=false.
+- If near lower soil bound → suggest a small amount (e.g., "add 50–100 ml").
+- Keep reason compact; e.g., "warm, comfy, optimal — no water needed".
+- Subject <= 60 chars; no external people or extra fields.
 
-Sensor values:
-- T = ${sensor.t_c} °C, H = ${sensor.h_pct} %, Soil = ${sensor.soil_pct} %.
-
-Fallback interpretation bands (use if plant is unknown):
-- Temperature: cool < 20, mild 20–28, warm > 28.
-- Humidity: dry < 40, comfy 40–65, humid > 65.
-- Soil: dry < 35, optimal 35–45, wet > 45.
-
-Advice rules:
-- If Soil < 35: advice.water_now = true; reason includes "dry soil" + a simple action (e.g., "add 50–100 ml").
-- If Soil < 25 OR (T > 30 AND Soil < 35): priority = "high".
-- If all bands are within mild/comfy/optimal → priority = "normal" and water_now = false.
-- If H > 70: suggest "increase airflow"; if T > 32: suggest "move to shade"; if Soil > 60: suggest "pause watering".
-- Keep reason compact; include statuses like: "warm, comfy, optimal — no water needed".
-
-Quote style:
-- Reflect the environment & plant; under 60 chars; no emojis.
-
-Context:
-- Timestamp: ${sensor.ts}
-
-Output: ONLY JSON, no markdown.
+Output: ONLY that single JSON object. Do NOT return an array.
 `;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
@@ -103,8 +88,8 @@ Output: ONLY JSON, no markdown.
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }]}],
     generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 256,
+      temperature: 0.5,
+      maxOutputTokens: 512,
       responseMimeType: "application/json"
     }
   };
@@ -118,28 +103,33 @@ Output: ONLY JSON, no markdown.
     }
     const data = await res.json();
     text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const parsed = OutputZ.parse(JSON.parse(text));
-    // Safety override: very dry soil => high priority
-    if (sensor.soil_pct < 25) parsed.priority = "high";
+    // Some model responses come back as [ { … } ] — normalize to object
+    let raw = JSON.parse(text);
+    if (Array.isArray(raw)) raw = raw[0] || {};
+    const parsed = OutputZ.parse(raw);
     return {
-      ts: sensor.ts,
+      ts,
       quote: parsed.quote,
-      emails: parsed.emails,     // <= exactly 1 item from prompt
+      emails: parsed.emails,
       priority: parsed.priority,
       advice: parsed.advice
     };
   } catch (e) {
     console.error("[gemini] fallback", e.message, "\nraw:", text);
+    const avg = (arr, k) => arr.length ? (arr.reduce((s, r) => s + Number(r[k] || 0), 0) / arr.length) : 0;
+    const tavg = Math.round(avg(readings, "t_c") * 10) / 10;
+    const havg = Math.round(avg(readings, "h_pct"));
+    const savg = Math.round(avg(readings, "soil_pct"));
     return {
-      ts: sensor.ts,
+      ts,
       quote: "Gentle air, steady roots.",
       emails: [{
         from: "AuraLinkPlant",
-        subject: "Plant status (fallback)",
-        summary: "Using fallback logic. Check soil and adjust watering."
+        subject: `${plantName} status (fallback)`,
+        summary: `Avg T=${isNaN(tavg)? "—" : tavg}°C, H=${isNaN(havg)? "—" : havg}%, Soil=${isNaN(savg)? "—" : savg}%`
       }],
-      priority: sensor.soil_pct < 25 ? "high" : "normal",
-      advice: { water_now: sensor.soil_pct < 35, reason: "Fallback JSON." }
+      priority: savg < 25 ? "high" : "normal",
+      advice: { water_now: savg < 35, reason: "Fallback JSON from 5-minute window." }
     };
   }
 }

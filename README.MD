@@ -135,3 +135,8 @@ That’s it! If you want me to add **Laceleaf (a.k.a. Peace Lily / *Spathiphyllu
 
 
 ## summary : publish sensor → backend saves → 5-min batch to Gemini → backend publishes summary to device + sends email.
+
+## Enetr the terminal `ipconfig getifaddr en0` that and get the IP `172.20.10.4` 
+## Now can replace localhost -> `172.20.10.4`
+## Device data - `mosquitto_sub -h 172.20.10.4 -u iot -P iot123 -t "plant/sensors/aura-01" -v`
+## Backend data- `mosquitto_sub -h 172.20.10.4 -u iot -P iot123 -t "plant/device/aura-01/display" -v`

@@ -29,7 +29,7 @@ async function getWindowReadings(deviceId) {
 
 export async function handleSensorMessage({ msg, mqttClient, topics, geminiKey }) {
   // 1) Persist reading
-  await Reading.create({
+  await Reading.create({            //save the sensor data readings to mongo db
     ts: new Date(msg.ts), deviceId: msg.deviceId,
     t_c: msg.t_c, h_pct: msg.h_pct, soil_pct: msg.soil_pct
   });

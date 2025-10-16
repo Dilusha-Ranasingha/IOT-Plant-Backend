@@ -131,3 +131,7 @@ gotcha — here’s the simple story of **how your plant name gets into Gemini**
 * Gemini replies with JSON → backend publishes it to `plant/device/aura-01/display`.
 
 That’s it! If you want me to add **Laceleaf (a.k.a. Peace Lily / *Spathiphyllum*)** target bands into `PLANT_BANDS` so guidance is even tighter, say the word and I’ll give you the snippet to paste.
+
+
+
+## summary : publish sensor → backend saves → 5-min batch to Gemini → backend publishes summary to device + sends email.

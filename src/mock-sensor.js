@@ -13,7 +13,13 @@ client.on("connect", () => {
     const t = 30.8 + (Math.random()*2-1);
     const h = 62 + (Math.random()*4-2);
     const s = 48 + (Math.random()*8-4);
-    const msg = { deviceId: DEVICE_ID, ts: now, t_c: +t.toFixed(1), h_pct: Math.round(h), soil_pct: Math.round(s), fw: "mock-1.0" };
+    const msg = { 
+                    deviceId: DEVICE_ID, 
+                    ts: now, 
+                    t_c: +t.toFixed(1), 
+                    h_pct: Math.round(h), 
+                    soil_pct: Math.round(s), 
+                    fw: "mock-1.0" };
     client.publish(TOPIC, JSON.stringify(msg), { qos: 1 });
     console.log("[mock] →", msg);
   }, 10_000);
